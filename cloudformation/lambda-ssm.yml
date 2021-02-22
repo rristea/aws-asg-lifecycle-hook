@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  ASGName:
+    Type: String
+    Description: The Autoscaling Group name.
+  ASGLifecycleHookLaunchingName:
+    Type: String
+    Description: The ASG Livecycle Hook Launching Name.
+
+Resources:
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AllowSendCommand
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                  - ssm:GetCommandInvocation
+                # This is too permissive. In prod some tag based filtering
+                # should be used to restrict the SSM commands only on the EC2s
+                # from the ASG.
+                Resource: "*"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-function
+      Code:
+        ZipFile: |
+          import boto3
+          import botocore
+          import time
+
+          def get_instance_id(event):
+            return event['detail']["EC2InstanceId"]
+
+          def get_ssm_command(event):
+              region = event['region']
+              message = event['detail']
+              life_cycle_hook = message["LifecycleHookName"]
+              auto_scaling_group = message["AutoScalingGroupName"]
+              instance_id = get_instance_id(event)
+              print(f"Received event for instance {instance_id}")
+              return  "aws autoscaling complete-lifecycle-action " + \
+                           "--lifecycle-action-result CONTINUE " + \
+                          f"--lifecycle-hook-name {life_cycle_hook} " + \
+                          f"--auto-scaling-group-name {auto_scaling_group} " + \
+                          f"--instance-id {instance_id} " + \
+                          f"--region {region} 2>&1"
+
+          def get_command_output(client, command_id, instance_id):
+              tries = 0
+              output = ''
+              while tries < 10:
+                  tries = tries + 1
+                  try:
+                      time.sleep(0.5)  # some delay always required...
+                      result = client.get_command_invocation(
+                          CommandId=command_id,
+                          InstanceId=instance_id,
+                      )
+                      if result['Status'] == 'InProgress':
+                          continue
+                      output = result['StandardOutputContent']
+                      break
+                  except client.exceptions.InvocationDoesNotExist:
+                      continue
+              return output
+
+          def handle_event(event, context):
+              instance_id = get_instance_id(event)
+              ssm_command = get_ssm_command(event)
+              client = boto3.client('ssm')
+              response = client.send_command(
+                  InstanceIds=[instance_id],
+                  DocumentName='AWS-RunShellScript',
+                  Parameters={
+                      'commands': [
+                          ssm_command
+                      ]
+                  }
+              )
+              command_id = response['Command']['CommandId']
+              return get_command_output(client, command_id, instance_id)
+
+      Handler: index.handle_event
+      Role: !GetAtt LambdaRole.Arn
+      Runtime: python3.7
+      MemorySize: 256
+      Timeout: 60
+
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: EventRule
+      EventPattern:
+        source:
+          - aws.autoscaling
+        detail-type:
+          - "EC2 Instance-launch Lifecycle Action"
+        detail:
+          AutoScalingGroupName:
+            - !Sub ${ASGName}
+          LifecycleHookName:
+            - !Sub ${ASGLifecycleHookLaunchingName}
+      State: ENABLED
+      Targets:
+        -
+          Arn: !GetAtt LambdaFunction.Arn
+          Id: TargetFunctionV1
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt EventRule.Arn
+
+Outputs:
+  LambdaFunctionName:
+    Description: Lambda Function Name
+    Value: !Ref LambdaFunction

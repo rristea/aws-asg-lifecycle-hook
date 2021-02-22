@@ -13,6 +13,18 @@ Resources:
               Service:
                 - ec2.amazonaws.com
             Action: sts:AssumeRole
+      Policies:
+        # This is only needed if the complete-lifecycle-action is executed from the host.
+        - PolicyName: AllowCompleteLifecycle
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - autoscaling:CompleteLifecycleAction
+                Resource: !Sub arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${AWS::StackName}-ASG
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
 
   HostInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -34,6 +46,7 @@ Resources:
   ASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
+      AutoScalingGroupName: !Sub ${AWS::StackName}-ASG
       MinSize: 0
       MaxSize: 5
       DesiredCapacity: 0

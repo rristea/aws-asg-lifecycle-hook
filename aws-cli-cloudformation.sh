@@ -37,6 +37,14 @@ if [ ! -z ${SCRIPT} ]; then
                 PARAMS="ParameterKey=ASGName,ParameterValue=${ASG_NAME} ParameterKey=ASGLifecycleHookLaunchingName,ParameterValue=${ASG_HOOK_NAME}"
             fi
         ;;
+        lambda-ssm)
+            TEMPLATE="cloudformation/lambda-ssm.yml"
+            if [ ${IS_CREATE_UPDATE} = true ]; then
+                ASG_NAME=$(./describe-stack.sh cloudformation/asg.yml --query "Stacks[0].Outputs[?OutputKey=='ASGName'].OutputValue" --output text)
+                ASG_HOOK_NAME=$(./describe-stack.sh cloudformation/asg.yml --query "Stacks[0].Outputs[?OutputKey=='ASGLifecycleHookLaunchingName'].OutputValue" --output text)
+                PARAMS="ParameterKey=ASGName,ParameterValue=${ASG_NAME} ParameterKey=ASGLifecycleHookLaunchingName,ParameterValue=${ASG_HOOK_NAME}"
+            fi
+        ;;
         *)
             echo "Unkown stack"
         ;;
