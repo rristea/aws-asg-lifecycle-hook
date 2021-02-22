@@ -174,3 +174,17 @@ START RequestId: cc1f8270-10f9-4fba-b0ac-9d69bfef3410 Version: $LATEST
         Lifecycle hook continued correctly: [...]
 ```
 
+## Complete the Lifecycle Hook through AWS Lambda that runs a SSM Run Command
+
+* Delete the previous lambda
+  ```
+  ./aws-cli-cloudformation.sh --rm lambda
+  ```
+  Also set desired capacity to zero.
+* The Lambda SSM function is defined in a CloudFormation template (`cloudformation/lambda-ssm.yml`), which can be deployed with:
+  ```
+  ./aws-cli-cloudformation.sh --create lambda-ssm
+  ```
+  Similarly to the previous Lambda template, this also contains an EventBridge Rule that searches for events emitted by our ASG Lyfecycle Hook. It then forwards that event to the Lambda. The Lambda then gets the information from the Event, and constructs the AWS CLI command for `aws autoscaling complete-lifecycle-action`. This command is then sent to the new instance, and executed on the instance, via the SDK for SSM.
+* Set the DesiredCapacity to one, so that the ASG will spawn an instance.
+* The Instance will get set to InService automatically via the Lambda function.
